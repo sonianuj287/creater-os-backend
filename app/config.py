@@ -1,4 +1,5 @@
 from pydantic_settings import BaseSettings
+from pydantic import ConfigDict
 from functools import lru_cache
 
 
@@ -20,15 +21,18 @@ class Settings(BaseSettings):
     frontend_url: str = "http://localhost:3000"
     environment: str = "development"
 
-    # AWS S3 (Phase 3)
+    # Cloudflare R2 / AWS S3
     aws_access_key_id: str = ""
     aws_secret_access_key: str = ""
-    aws_region: str = "ap-south-1"
+    aws_region: str = "auto"
+    aws_endpoint_url: str = ""
     s3_bucket_name: str = "creator-os-media"
 
-    class Config:
-        env_file = ".env"
-        case_sensitive = False
+    model_config = ConfigDict(
+        env_file=".env",
+        case_sensitive=False,
+        extra="allow"
+    )
 
 
 @lru_cache()

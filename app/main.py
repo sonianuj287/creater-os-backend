@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.config import get_settings
-from app.routers import ideas, studio
+from app.routers import ideas, studio, media
 
 settings = get_settings()
 
@@ -27,7 +27,7 @@ app.add_middleware(
 # Routers
 app.include_router(ideas.router)
 app.include_router(studio.router)
-
+app.include_router(media.router)
 
 @app.get("/")
 async def root():
