@@ -16,6 +16,8 @@ celery_app = Celery(
 )
 
 celery_app.conf.update(
+    worker_concurrency=1,
+    worker_max_memory_per_child=400000,
     broker_connection_retry_on_startup=True,
     task_serializer="json",
     result_serializer="json",
