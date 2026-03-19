@@ -1,24 +1,34 @@
-import httpx
 import json
+import re
 import os
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 from app.config import get_settings
 
 settings = get_settings()
-genai.configure(api_key=settings.gemini_api_key)
+client = genai.Client(api_key=settings.gemini_api_key)
 
+FLASH = "gemini-2.0-flash"
+
+
+def _parse_json(text: str) -> dict:
+    clean = re.sub(r"```(?:json)?", "", text).strip().rstrip("`").strip()
+    return json.loads(clean)
+
+
+# ── Transcription ────────────────────────────────────────────
 
 async def transcribe_audio(audio_path: str) -> dict:
     """
-    Transcribe audio using Gemini's audio understanding.
-    Returns segments with timestamps for caption generation.
+    Transcribe audio using Gemini's native audio understanding.
+    Returns full transcript + word-level segments for caption generation.
     """
-    model = genai.GenerativeModel("gemini-1.5-flash")
-
-    with open(audio_path, "rb") as f:
-        audio_data = f.read()
-
-    audio_file = genai.upload_file(audio_path, mime_type="audio/wav")
+    # Upload audio file to Gemini File API
+    print(f"Uploading audio to Gemini: {audio_path}")
+    audio_file = client.files.upload(
+        file=audio_path,
+        config=types.UploadFileConfig(mime_type="audio/wav"),
+    )
 
     prompt = """Transcribe this audio completely and accurately.
 Return ONLY valid JSON with this exact structure — no markdown, no explanation:
@@ -31,16 +41,24 @@ Return ONLY valid JSON with this exact structure — no markdown, no explanation
   "language": "en",
   "duration_seconds": 120
 }
-Include every word with timestamps. Be precise."""
+Include every word with timestamps. Be as precise as possible."""
 
-    response = model.generate_content([prompt, audio_file])
+    response = client.models.generate_content(
+        model=FLASH,
+        contents=[prompt, audio_file],
+    )
+
+    # Clean up uploaded file after use
+    try:
+        client.files.delete(name=audio_file.name)
+    except Exception:
+        pass
 
     try:
-        clean = response.text.replace("```json", "").replace("```", "").strip()
-        data = json.loads(clean)
+        data = _parse_json(response.text)
         return data
     except json.JSONDecodeError:
-        # Fallback: return just the text without timestamps
+        # Fallback — return text without timestamps
         return {
             "text": response.text,
             "segments": [],
@@ -49,27 +67,27 @@ Include every word with timestamps. Be precise."""
         }
 
 
+# ── Golden moment detection ──────────────────────────────────
+
 async def extract_golden_moments(
     transcript: str,
     duration_seconds: float,
     num_clips: int = 5,
 ) -> list[dict]:
     """
-    Use Gemini to identify the most engaging moments in a transcript.
-    Returns segments with timestamps and engagement scores.
+    Use Gemini to find the most engaging moments for short clips.
+    Returns list of segments with start/end times and engagement scores.
     """
-    model = genai.GenerativeModel("gemini-1.5-flash")
-
-    prompt = f"""You are a viral content editor. Analyze this transcript and find the {num_clips} most engaging moments that would work as short standalone clips (30–90 seconds each).
+    prompt = f"""You are a viral content editor. Analyze this transcript and find the {num_clips} most engaging moments that would work as short standalone clips (30-90 seconds each).
 
 Transcript:
 {transcript[:4000]}
 
 Video duration: {duration_seconds:.0f} seconds
 
-Find moments that have: strong hooks, surprising revelations, emotional peaks, actionable tips, or quotable lines.
+Find moments with: strong hooks, surprising revelations, emotional peaks, actionable tips, or quotable lines.
 
-Return ONLY valid JSON — no markdown:
+Return ONLY valid JSON:
 {{
   "clips": [
     {{
@@ -83,19 +101,27 @@ Return ONLY valid JSON — no markdown:
   ]
 }}"""
 
-    response = model.generate_content(prompt)
+    response = client.models.generate_content(
+        model=FLASH,
+        contents=prompt,
+        config=types.GenerateContentConfig(temperature=0.7),
+    )
+
     try:
-        clean = response.text.replace("```json", "").replace("```", "").strip()
-        data = json.loads(clean)
+        data = _parse_json(response.text)
         return data.get("clips", [])
     except Exception:
         return []
 
 
-async def generate_carousel_slides(transcript: str, title: str, num_slides: int = 5) -> list[dict]:
-    """Generate carousel slide content from a transcript."""
-    model = genai.GenerativeModel("gemini-1.5-flash")
+# ── Carousel slides ──────────────────────────────────────────
 
+async def generate_carousel_slides(
+    transcript: str,
+    title: str,
+    num_slides: int = 5,
+) -> list[dict]:
+    """Generate Instagram carousel slide content from a transcript."""
     prompt = f"""Create a {num_slides}-slide Instagram carousel from this content.
 
 Title: {title}
@@ -116,26 +142,30 @@ Return ONLY valid JSON:
   ]
 }}"""
 
-    response = model.generate_content(prompt)
+    response = client.models.generate_content(
+        model=FLASH,
+        contents=prompt,
+        config=types.GenerateContentConfig(temperature=0.7),
+    )
+
     try:
-        clean = response.text.replace("```json", "").replace("```", "").strip()
-        data = json.loads(clean)
+        data = _parse_json(response.text)
         return data.get("slides", [])
     except Exception:
         return []
 
 
+# ── Tweet thread ─────────────────────────────────────────────
+
 async def generate_tweet_thread(transcript: str, title: str) -> list[str]:
     """Generate a 5-tweet thread from a transcript."""
-    model = genai.GenerativeModel("gemini-1.5-flash")
-
     prompt = f"""Write a 5-tweet thread based on this content.
 
 Title: {title}
 Transcript: {transcript[:3000]}
 
 Rules:
-- Tweet 1: strong hook that makes people want to read more. End with "🧵"
+- Tweet 1: strong hook that makes people want to read more. End with a thread symbol
 - Tweets 2-4: one key insight each, concrete and specific
 - Tweet 5: summary + CTA to watch the full video
 - Each tweet under 280 characters
@@ -144,19 +174,23 @@ Rules:
 Return ONLY valid JSON:
 {{"tweets": ["tweet 1 text", "tweet 2 text", "tweet 3 text", "tweet 4 text", "tweet 5 text"]}}"""
 
-    response = model.generate_content(prompt)
+    response = client.models.generate_content(
+        model=FLASH,
+        contents=prompt,
+        config=types.GenerateContentConfig(temperature=0.75),
+    )
+
     try:
-        clean = response.text.replace("```json", "").replace("```", "").strip()
-        data = json.loads(clean)
+        data = _parse_json(response.text)
         return data.get("tweets", [])
     except Exception:
         return []
 
 
-async def generate_newsletter_intro(transcript: str, title: str) -> dict:
-    """Generate a newsletter intro from a transcript."""
-    model = genai.GenerativeModel("gemini-1.5-flash")
+# ── Newsletter intro ─────────────────────────────────────────
 
+async def generate_newsletter_intro(transcript: str, title: str) -> dict:
+    """Generate a newsletter intro section from a transcript."""
     prompt = f"""Write a newsletter intro section based on this video content.
 
 Title: {title}
@@ -170,9 +204,18 @@ Return ONLY valid JSON:
   "key_takeaways": ["takeaway 1", "takeaway 2", "takeaway 3", "takeaway 4"]
 }}"""
 
-    response = model.generate_content(prompt)
+    response = client.models.generate_content(
+        model=FLASH,
+        contents=prompt,
+        config=types.GenerateContentConfig(temperature=0.7),
+    )
+
     try:
-        clean = response.text.replace("```json", "").replace("```", "").strip()
-        return json.loads(clean)
+        return _parse_json(response.text)
     except Exception:
-        return {"subject_line": title, "preview_text": "", "intro": "", "key_takeaways": []}
+        return {
+            "subject_line": title,
+            "preview_text": "",
+            "intro": "",
+            "key_takeaways": [],
+        }
