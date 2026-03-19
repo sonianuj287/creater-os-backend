@@ -192,10 +192,11 @@ def export_multi_format(
         out_path = os.path.join(output_dir, f"{base_name}_{config['suffix']}.mp4")
         run_ffmpeg(
             ["-i", video_path,
-            "-vf", f"{config['filter']},format=yuv420p",  # convert 10-bit to 8-bit
+            "-vf", config["filter"],          # scale/pad only
+            "-pix_fmt", "yuv420p",            # separate flag — no conflict
             "-c:v", "libx264", "-crf", "23", "-preset", "fast",
             "-c:a", "aac", "-b:a", "128k",
-            "-movflags", "+faststart",  # optimize for web streaming
+            "-movflags", "+faststart",
             out_path],
             f"export {fmt}"
         )
@@ -205,15 +206,14 @@ def export_multi_format(
 
 
 def trim_clip(video_path: str, start: float, end: float, output_path: str) -> str:
-    """Trim a specific segment from a video."""
     run_ffmpeg(
         ["-ss", str(start), "-to", str(end),
-        "-i", video_path,
-        "-vf", "format=yuv420p",
-        "-c:v", "libx264", "-crf", "23", "-preset", "fast",
-        "-c:a", "aac", "-b:a", "128k",
-        output_path],
-        f"trim {start:.1f}s–{end:.1f}s"
+         "-i", video_path,
+         "-pix_fmt", "yuv420p",
+         "-c:v", "libx264", "-crf", "23", "-preset", "fast",
+         "-c:a", "aac", "-b:a", "128k",
+         output_path],
+        f"trim {start:.1f}s-{end:.1f}s"
     )
     return output_path
 
