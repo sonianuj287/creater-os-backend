@@ -6,13 +6,12 @@ from app.config import get_settings
 from app.services import media_service, storage_service, transcription_service
 from app.services.db_service import get_supabase
 
-settings = get_settings()
+redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379")
 
-# Celery app using Redis as broker + backend
 celery_app = Celery(
     "creator_os",
-    broker=settings.redis_url,
-    backend=settings.redis_url,
+    broker=redis_url,
+    backend=redis_url,
 )
 
 celery_app.conf.update(
