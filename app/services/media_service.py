@@ -133,18 +133,24 @@ def burn_captions(
     """
     Burn subtitles into video using FFmpeg.
     Styles: minimal | bold | colour_pop
+    Uses DejaVu Sans (available on Railway) instead of Arial.
     """
     style_config = {
-        "minimal": "FontName=Arial,FontSize=18,PrimaryColour=&Hffffff,OutlineColour=&H000000,Outline=1,Bold=0",
-        "bold":    "FontName=Arial,FontSize=22,PrimaryColour=&Hffffff,OutlineColour=&H000000,Outline=2,Bold=1",
-        "colour_pop": "FontName=Arial,FontSize=22,PrimaryColour=&H00ffff,OutlineColour=&H000000,Outline=2,Bold=1",
+        "minimal":    "FontName=DejaVu Sans,FontSize=16,PrimaryColour=&Hffffff,OutlineColour=&H000000,Outline=1,Bold=0,Alignment=2",
+        "bold":       "FontName=DejaVu Sans,FontSize=20,PrimaryColour=&Hffffff,OutlineColour=&H000000,Outline=2,Bold=1,Alignment=2",
+        "colour_pop": "FontName=DejaVu Sans,FontSize=20,PrimaryColour=&H00ffff,OutlineColour=&H000000,Outline=2,Bold=1,Alignment=2",
     }
     force_style = style_config.get(style, style_config["minimal"])
 
+    # Escape srt path for FFmpeg subtitle filter
+    escaped_srt = srt_path.replace("\\", "/").replace(":", "\\:")
+
     run_ffmpeg(
         ["-i", video_path,
-         "-vf", f"subtitles={srt_path}:force_style='{force_style}'",
-         "-c:a", "copy",
+         "-vf", f"subtitles={escaped_srt}:force_style='{force_style}'",
+         "-c:v", "libx264",
+         "-c:a", "aac",
+         "-preset", "fast",
          output_path],
         f"burn captions ({style})"
     )
