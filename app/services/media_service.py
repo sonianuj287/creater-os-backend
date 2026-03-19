@@ -6,12 +6,14 @@ from pathlib import Path
 
 
 def run_ffmpeg(args: list[str], description: str = "") -> str:
+    """Run an FFmpeg command and return stdout. Raises on failure."""
     cmd = ["ffmpeg", "-y"] + args
     print(f"FFmpeg: {description}")
+    print(f"FFmpeg CMD: {' '.join(cmd)}")
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
-        print(f"FFmpeg FULL ERROR:\n{result.stderr}")  # full log
-        raise Exception(f"FFmpeg failed ({description}): {result.stderr[-1000:]}")
+        print(f"FFmpeg FULL STDERR:\n{result.stderr}")
+        raise Exception(f"FFmpeg failed ({description}): {result.stderr[-2000:]}")
     return result.stdout
 
 
@@ -19,7 +21,9 @@ def extract_audio(video_path: str, audio_path: str) -> str:
     """Extract audio track from video for transcription."""
     run_ffmpeg(
         ["-i", video_path, "-vn", "-acodec", "pcm_s16le",
-         "-ar", "16000", "-ac", "1", audio_path],
+         "-ar", "16000", "-ac", "1",
+         "-threads", "1",
+         audio_path],
         "extract audio"
     )
     return audio_path
@@ -72,13 +76,23 @@ def cut_silences(video_path: str, output_path: str, min_silence: float = 0.8) ->
     """
     Remove silent segments from video.
     Keeps a 0.2s buffer around speech for natural feel.
+    Memory-optimised for Railway 400MB limit.
     """
     silences = detect_silence(video_path, min_silence=min_silence)
     duration = get_video_duration(video_path)
 
     if not silences:
-        # No silences found — just copy
-        run_ffmpeg(["-i", video_path, "-c", "copy", output_path], "copy (no silences)")
+        # No silences — re-encode to normalise format (handles HEVC -> h264)
+        run_ffmpeg(
+            ["-i", video_path,
+             "-pix_fmt", "yuv420p",
+             "-c:v", "libx264", "-crf", "28",
+             "-preset", "ultrafast",
+             "-threads", "1",
+             "-c:a", "aac", "-b:a", "96k",
+             output_path],
+            "normalise (no silences)"
+        )
         return output_path
 
     # Build list of segments to KEEP (inverse of silences)
@@ -96,7 +110,16 @@ def cut_silences(video_path: str, output_path: str, min_silence: float = 0.8) ->
         keep_segments.append((prev_end, duration))
 
     if not keep_segments:
-        run_ffmpeg(["-i", video_path, "-c", "copy", output_path], "copy fallback")
+        run_ffmpeg(
+            ["-i", video_path,
+             "-pix_fmt", "yuv420p",
+             "-c:v", "libx264", "-crf", "28",
+             "-preset", "ultrafast",
+             "-threads", "1",
+             "-c:a", "aac", "-b:a", "96k",
+             output_path],
+            "copy fallback"
+        )
         return output_path
 
     # Build filter_complex for concatenation
@@ -116,8 +139,11 @@ def cut_silences(video_path: str, output_path: str, min_silence: float = 0.8) ->
         inputs + [
             "-filter_complex", concat_filter,
             "-map", "[outv]", "-map", "[outa]",
-            "-vf", "format=yuv420p",      # add this line
-            "-c:v", "libx264", "-c:a", "aac",
+            "-pix_fmt", "yuv420p",
+            "-c:v", "libx264", "-crf", "28",
+            "-preset", "ultrafast",
+            "-threads", "1",
+            "-c:a", "aac", "-b:a", "96k",
             output_path
         ],
         f"cut {len(silences)} silences"
@@ -134,7 +160,8 @@ def burn_captions(
     """
     Burn subtitles into video using FFmpeg.
     Styles: minimal | bold | colour_pop
-    Uses DejaVu Sans (available on Railway) instead of Arial.
+    Uses DejaVu Sans (available on Railway Debian image).
+    Memory-optimised for Railway 400MB limit.
     """
     style_config = {
         "minimal":    "FontName=DejaVu Sans,FontSize=16,PrimaryColour=&Hffffff,OutlineColour=&H000000,Outline=1,Bold=0,Alignment=2",
@@ -149,9 +176,11 @@ def burn_captions(
     run_ffmpeg(
         ["-i", video_path,
          "-vf", f"subtitles={escaped_srt}:force_style='{force_style}'",
-         "-c:v", "libx264",
-         "-c:a", "aac",
-         "-preset", "fast",
+         "-pix_fmt", "yuv420p",
+         "-c:v", "libx264", "-crf", "28",
+         "-preset", "ultrafast",
+         "-threads", "1",
+         "-c:a", "aac", "-b:a", "96k",
          output_path],
         f"burn captions ({style})"
     )
@@ -164,11 +193,9 @@ def export_multi_format(
     base_name: str = "output",
 ) -> dict[str, str]:
     """
-    Export video in 3 formats from one source:
-    - 9:16 vertical (Reels, Shorts, TikTok)
-    - 1:1 square (Instagram feed)
-    - 16:9 horizontal (YouTube)
-    Returns dict of format → output path.
+    Export video in 3 formats from one source.
+    Uses 720p (not 1080p) to stay within Railway 400MB memory limit.
+    Upgrade to 1080p when on Railway Hobby plan ($5/month).
     """
     os.makedirs(output_dir, exist_ok=True)
     outputs = {}
@@ -176,15 +203,15 @@ def export_multi_format(
     formats = {
         "9x16": {
             "suffix": "vertical",
-            "filter": "scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2",
+            "filter": "scale=720:1280:force_original_aspect_ratio=decrease,pad=720:1280:(ow-iw)/2:(oh-ih)/2",
         },
         "1x1": {
             "suffix": "square",
-            "filter": "scale=1080:1080:force_original_aspect_ratio=decrease,pad=1080:1080:(ow-iw)/2:(oh-ih)/2",
+            "filter": "scale=720:720:force_original_aspect_ratio=decrease,pad=720:720:(ow-iw)/2:(oh-ih)/2",
         },
         "16x9": {
             "suffix": "horizontal",
-            "filter": "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2",
+            "filter": "scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2",
         },
     }
 
@@ -192,12 +219,14 @@ def export_multi_format(
         out_path = os.path.join(output_dir, f"{base_name}_{config['suffix']}.mp4")
         run_ffmpeg(
             ["-i", video_path,
-            "-vf", config["filter"],          # scale/pad only
-            "-pix_fmt", "yuv420p",            # separate flag — no conflict
-            "-c:v", "libx264", "-crf", "23", "-preset", "fast",
-            "-c:a", "aac", "-b:a", "128k",
-            "-movflags", "+faststart",
-            out_path],
+             "-vf", config["filter"],
+             "-pix_fmt", "yuv420p",
+             "-c:v", "libx264", "-crf", "28",
+             "-preset", "ultrafast",
+             "-threads", "1",
+             "-c:a", "aac", "-b:a", "96k",
+             "-movflags", "+faststart",
+             out_path],
             f"export {fmt}"
         )
         outputs[fmt] = out_path
@@ -206,12 +235,15 @@ def export_multi_format(
 
 
 def trim_clip(video_path: str, start: float, end: float, output_path: str) -> str:
+    """Trim a specific segment from a video. Memory-optimised."""
     run_ffmpeg(
         ["-ss", str(start), "-to", str(end),
          "-i", video_path,
          "-pix_fmt", "yuv420p",
-         "-c:v", "libx264", "-crf", "23", "-preset", "fast",
-         "-c:a", "aac", "-b:a", "128k",
+         "-c:v", "libx264", "-crf", "28",
+         "-preset", "ultrafast",
+         "-threads", "1",
+         "-c:a", "aac", "-b:a", "96k",
          output_path],
         f"trim {start:.1f}s-{end:.1f}s"
     )
@@ -223,6 +255,7 @@ def extract_best_frame(video_path: str, output_path: str, time_offset: float = 3
     run_ffmpeg(
         ["-ss", str(time_offset), "-i", video_path,
          "-vframes", "1", "-q:v", "2",
+         "-threads", "1",
          output_path],
         "extract thumbnail frame"
     )
