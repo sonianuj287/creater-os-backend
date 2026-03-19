@@ -7,8 +7,8 @@ from app.config import get_settings
 settings = get_settings()
 client = genai.Client(api_key=settings.gemini_api_key)
 
-FLASH = "gemini-1.5-flash-latest"
-PRO   = "gemini-1.5-flash-latest"
+FLASH = "gemini-3-flash-preview"
+PRO   = "gemini-3-flash-preview"
 
 
 def _parse_json(text: str) -> dict:
