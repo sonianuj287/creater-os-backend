@@ -11,13 +11,13 @@ pydantic==2.7.4
 pydantic-settings==2.3.4
 
 # Google Gemini — new SDK (replaces deprecated google-generativeai)
-google-genai==1.7.0
+google-genai>=1.7.0
 
 # YouTube Data API
 google-api-python-client==2.134.0
 
 # Supabase
-supabase==2.5.1
+supabase>=2.9.0
 
 # HTTP client
 httpx>=0.28.1
