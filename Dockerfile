@@ -3,6 +3,7 @@ FROM python:3.11-slim
 # Install FFmpeg from apt (pre-built binary, no compilation needed)
 RUN apt-get update && apt-get install -y \
     ffmpeg \
+    fonts-dejavu-core \
     && rm -rf /var/lib/apt/lists/*
 
 # Set working directory
