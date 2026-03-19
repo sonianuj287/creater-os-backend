@@ -116,6 +116,7 @@ def cut_silences(video_path: str, output_path: str, min_silence: float = 0.8) ->
         inputs + [
             "-filter_complex", concat_filter,
             "-map", "[outv]", "-map", "[outa]",
+            "-vf", "format=yuv420p",      # add this line
             "-c:v", "libx264", "-c:a", "aac",
             output_path
         ],
@@ -191,10 +192,11 @@ def export_multi_format(
         out_path = os.path.join(output_dir, f"{base_name}_{config['suffix']}.mp4")
         run_ffmpeg(
             ["-i", video_path,
-             "-vf", config["filter"],
-             "-c:v", "libx264", "-crf", "23",
-             "-c:a", "aac", "-b:a", "128k",
-             out_path],
+            "-vf", f"{config['filter']},format=yuv420p",  # convert 10-bit to 8-bit
+            "-c:v", "libx264", "-crf", "23", "-preset", "fast",
+            "-c:a", "aac", "-b:a", "128k",
+            "-movflags", "+faststart",  # optimize for web streaming
+            out_path],
             f"export {fmt}"
         )
         outputs[fmt] = out_path
@@ -206,9 +208,11 @@ def trim_clip(video_path: str, start: float, end: float, output_path: str) -> st
     """Trim a specific segment from a video."""
     run_ffmpeg(
         ["-ss", str(start), "-to", str(end),
-         "-i", video_path,
-         "-c:v", "libx264", "-c:a", "aac",
-         output_path],
+        "-i", video_path,
+        "-vf", "format=yuv420p",
+        "-c:v", "libx264", "-crf", "23", "-preset", "fast",
+        "-c:a", "aac", "-b:a", "128k",
+        output_path],
         f"trim {start:.1f}s–{end:.1f}s"
     )
     return output_path
