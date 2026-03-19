@@ -103,12 +103,15 @@ def process_video(
                 working_video = cut_path
 
             # ── Step 4: Burn captions (optional) ─────────────
-            if options.get("burn_captions", True) and srt_content:
+            if options.get("burn_captions", True) and srt_content and srt_content.strip():
                 self.update_state(state="PROGRESS", meta={"step": "Burning captions", "progress": 45})
                 captioned_path = os.path.join(tmp_dir, "captioned.mp4")
                 caption_style = options.get("caption_style", "bold")
-                media_service.burn_captions(working_video, srt_path, captioned_path, caption_style)
-                working_video = captioned_path
+                try:
+                    media_service.burn_captions(working_video, srt_path, captioned_path, caption_style)
+                    working_video = captioned_path
+                except Exception as caption_err:
+                    print(f"Caption burn failed (continuing without captions): {caption_err}")
 
             # ── Step 5: Multi-format export ───────────────────
             self.update_state(state="PROGRESS", meta={"step": "Exporting formats", "progress": 60})

@@ -6,12 +6,12 @@ from pathlib import Path
 
 
 def run_ffmpeg(args: list[str], description: str = "") -> str:
-    """Run an FFmpeg command and return stdout. Raises on failure."""
     cmd = ["ffmpeg", "-y"] + args
     print(f"FFmpeg: {description}")
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
-        raise Exception(f"FFmpeg failed ({description}): {result.stderr[-500:]}")
+        print(f"FFmpeg FULL ERROR:\n{result.stderr}")  # full log
+        raise Exception(f"FFmpeg failed ({description}): {result.stderr[-1000:]}")
     return result.stdout
 
 
