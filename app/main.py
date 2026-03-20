@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.config import get_settings
-from app.routers import ideas, studio, media
+from app.routers import ideas, studio, media, publish
 
 settings = get_settings()
 
@@ -15,6 +15,7 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
+        settings.frontend_url,
         "http://localhost:3000",
         "https://creater-os-sonianuj287s-projects.vercel.app",
         "https://*.vercel.app",
@@ -28,6 +29,7 @@ app.add_middleware(
 app.include_router(ideas.router)
 app.include_router(studio.router)
 app.include_router(media.router)
+app.include_router(publish.router)
 
 @app.get("/")
 async def root():
