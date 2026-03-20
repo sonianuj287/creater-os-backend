@@ -1,3 +1,4 @@
+import httpx
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
@@ -52,18 +53,14 @@ class SchedulePostRequest(BaseModel):
 
 @router.get("/instagram/connect")
 async def instagram_connect(user_id: str = Query(...)):
-    """
-    Step 1: Redirect user to Instagram OAuth login page.
-    Frontend calls this URL — user is redirected to Instagram.
-    """
     redirect_uri = f"{settings.backend_url}/publish/instagram/callback"
-    scope = "instagram_basic,instagram_content_publish,instagram_manage_insights"
-
+    
+    # Use Facebook OAuth (not api.instagram.com) for Business Login
     oauth_url = (
-        f"https://api.instagram.com/oauth/authorize"
+        f"https://www.facebook.com/dialog/oauth"
         f"?client_id={settings.instagram_app_id}"
         f"&redirect_uri={redirect_uri}"
-        f"&scope={scope}"
+        f"&scope=instagram_basic,instagram_content_publish,instagram_manage_insights,pages_show_list,pages_read_engagement"
         f"&response_type=code"
         f"&state={user_id}"
     )
@@ -76,44 +73,79 @@ async def instagram_callback(
     state: str = Query(None),
     error: str = Query(None),
 ):
-    """
-    Step 2: Instagram redirects here with authorization code.
-    Exchange for token and save to DB.
-    """
     if error:
         return RedirectResponse(url=f"{FRONTEND_URL}/dashboard/publish?error=instagram_denied")
 
-    if not code or not state:
-        return RedirectResponse(url=f"{FRONTEND_URL}/dashboard/publish?error=invalid_callback")
-
-    user_id = state
+    user_id      = state
     redirect_uri = f"{settings.backend_url}/publish/instagram/callback"
 
     try:
-        # Exchange code for long-lived token
-        token_data = await instagram_service.exchange_code_for_token(code, redirect_uri)
-        access_token = token_data["access_token"]
-        ig_user_id   = str(token_data["user_id"])
+        async with httpx.AsyncClient() as client:
+            # Exchange code for Facebook user access token
+            token_resp = await client.get(
+                "https://graph.facebook.com/v21.0/oauth/access_token",
+                params={
+                    "client_id":     settings.instagram_app_id,
+                    "client_secret": settings.instagram_app_secret,
+                    "redirect_uri":  redirect_uri,
+                    "code":          code,
+                }
+            )
+            token_resp.raise_for_status()
+            token_data   = token_resp.json()
+            fb_token     = token_data["access_token"]
 
-        # Get user info
-        user_info = await instagram_service.get_user_info(access_token)
-        username  = user_info.get("username", "")
-        followers = user_info.get("followers_count", 0)
+            # Get Facebook pages linked to this user
+            pages_resp = await client.get(
+                "https://graph.facebook.com/v21.0/me/accounts",
+                params={"access_token": fb_token}
+            )
+            pages_resp.raise_for_status()
+            pages = pages_resp.json().get("data", [])
 
-        # Calculate token expiry (60 days)
-        expires_at = (datetime.utcnow() + timedelta(seconds=token_data.get("expires_in", 5183944))).isoformat()
+            if not pages:
+                return RedirectResponse(url=f"{FRONTEND_URL}/dashboard/publish?error=no_facebook_page")
 
-        # Save to DB
+            page_token = pages[0]["access_token"]
+            page_id    = pages[0]["id"]
+
+            # Get Instagram Business Account linked to this page
+            ig_resp = await client.get(
+                f"https://graph.facebook.com/v21.0/{page_id}",
+                params={
+                    "fields":       "instagram_business_account",
+                    "access_token": page_token,
+                }
+            )
+            ig_resp.raise_for_status()
+            ig_data = ig_resp.json()
+            ig_account = ig_data.get("instagram_business_account")
+
+            if not ig_account:
+                return RedirectResponse(url=f"{FRONTEND_URL}/dashboard/publish?error=no_instagram_account")
+
+            ig_user_id = ig_account["id"]
+
+            # Get Instagram user details
+            user_resp = await client.get(
+                f"https://graph.facebook.com/v21.0/{ig_user_id}",
+                params={
+                    "fields":       "username,followers_count",
+                    "access_token": page_token,
+                }
+            )
+            user_resp.raise_for_status()
+            user_info = user_resp.json()
+
+        # Save to DB using page_token for posting
         supabase = get_supabase()
         supabase.table("connected_accounts").upsert({
             "user_id":              user_id,
             "platform":             "instagram",
             "platform_user_id":     ig_user_id,
-            "platform_username":    username,
-            "platform_display_name": username,
-            "access_token":         access_token,
-            "token_expires_at":     expires_at,
-            "follower_count":       followers,
+            "platform_username":    user_info.get("username", ""),
+            "access_token":         page_token,
+            "follower_count":       user_info.get("followers_count", 0),
             "is_active":            True,
         }, on_conflict="user_id,platform").execute()
 
