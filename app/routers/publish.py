@@ -60,7 +60,7 @@ async def instagram_connect(user_id: str = Query(...)):
         f"https://www.facebook.com/dialog/oauth"
         f"?client_id={settings.instagram_app_id}"
         f"&redirect_uri={redirect_uri}"
-        f"&scope=instagram_basic,instagram_content_publish,instagram_manage_insights,pages_show_list,pages_read_engagement"
+        f"&scope=instagram_business_basic,instagram_business_content_publish,instagram_business_manage_insights,pages_show_list,pages_read_engagement"
         f"&response_type=code"
         f"&state={user_id}"
     )
