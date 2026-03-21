@@ -17,7 +17,6 @@ app.add_middleware(
     allow_origins=[
         settings.frontend_url,
         "http://localhost:3000",
-        "https://creater-os-sonianuj287s-projects.vercel.app",
         "https://*.vercel.app",
     ],
     allow_credentials=True,
@@ -30,6 +29,7 @@ app.include_router(ideas.router)
 app.include_router(studio.router)
 app.include_router(media.router)
 app.include_router(publish.router)
+
 
 @app.get("/")
 async def root():
@@ -44,3 +44,6 @@ async def root():
 @app.get("/health")
 async def health():
     return {"status": "ok"}
+
+from app.routers import publish_simple
+app.include_router(publish_simple.router)
