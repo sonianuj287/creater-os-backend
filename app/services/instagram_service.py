@@ -4,34 +4,21 @@ from app.config import get_settings
 
 settings = get_settings()
 
-GRAPH_URL = "https://graph.facebook.com/v21.0"
+GRAPH_URL = "https://graph.instagram.com/v21.0"
 
 
 async def get_user_info(access_token: str) -> dict:
-    """Get Instagram business account info from access token."""
+    """Get Instagram user info - uses Basic Display API endpoint."""
     async with httpx.AsyncClient() as client:
-        # First get the user ID
-        me_resp = await client.get(
-            "https://graph.facebook.com/v21.0/me",
+        resp = await client.get(
+            f"{GRAPH_URL}/me",
             params={
-                "fields": "id,name",
+                "fields": "id,username,account_type,followers_count",
                 "access_token": access_token,
             }
         )
-        me_resp.raise_for_status()
-        me_data = me_resp.json()
-        user_id = me_data["id"]
-
-        # Then get Instagram business account details
-        ig_resp = await client.get(
-            f"https://graph.facebook.com/v21.0/{user_id}",
-            params={
-                "fields": "id,username,followers_count,account_type",
-                "access_token": access_token,
-            }
-        )
-        ig_resp.raise_for_status()
-        return ig_resp.json()
+        resp.raise_for_status()
+        return resp.json()
 
 
 async def refresh_long_lived_token(long_lived_token: str) -> dict:
