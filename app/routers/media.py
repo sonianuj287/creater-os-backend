@@ -188,3 +188,49 @@ async def get_project_outputs(project_id: str):
         .execute()
     )
     return {"outputs": result.data or []}
+
+
+# ── Scene assembler ───────────────────────────────────────────
+
+class AssembleRequest(BaseModel):
+    user_id:    str
+    project_id: str
+    title:      str
+    scene_keys: list[str]   # Ordered list of S3 keys
+    options:    dict = {}
+
+
+@router.post("/assemble")
+async def assemble_scenes(request: AssembleRequest):
+    """
+    Assemble multiple scene clips into one final video.
+    scene_keys must be in the order they should appear.
+    """
+    supabase = get_supabase()
+
+    output_id = str(uuid.uuid4())
+    supabase.table("generated_outputs").insert({
+        "id":          output_id,
+        "project_id":  request.project_id,
+        "user_id":     request.user_id,
+        "output_type": "assembled_video",
+        "status":      "pending",
+        "metadata":    '{"scene_count": ' + str(len(request.scene_keys)) + '}',
+    }).execute()
+
+    from app.workers.video_tasks import assemble_scenes_task
+    task = assemble_scenes_task.delay(
+        output_id=output_id,
+        project_id=request.project_id,
+        user_id=request.user_id,
+        scene_keys=request.scene_keys,
+        title=request.title,
+        options=request.options,
+    )
+
+    return {
+        "output_id": output_id,
+        "task_id":   task.id,
+        "status":    "pending",
+        "scenes":    len(request.scene_keys),
+    }

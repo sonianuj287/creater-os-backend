@@ -6,18 +6,16 @@ from app.config import get_settings
 from app.services import media_service, storage_service, transcription_service
 from app.services.db_service import get_supabase
 
-redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379")
+settings = get_settings()
 
+# Celery app using Redis as broker + backend
 celery_app = Celery(
     "creator_os",
-    broker=redis_url,
-    backend=redis_url,
+    broker=settings.redis_url,
+    backend=settings.redis_url,
 )
 
 celery_app.conf.update(
-    worker_concurrency=1,
-    worker_max_memory_per_child=400000,
-    broker_connection_retry_on_startup=True,
     task_serializer="json",
     result_serializer="json",
     accept_content=["json"],
@@ -103,15 +101,12 @@ def process_video(
                 working_video = cut_path
 
             # ── Step 4: Burn captions (optional) ─────────────
-            if options.get("burn_captions", True) and srt_content and srt_content.strip():
+            if options.get("burn_captions", True) and srt_content:
                 self.update_state(state="PROGRESS", meta={"step": "Burning captions", "progress": 45})
                 captioned_path = os.path.join(tmp_dir, "captioned.mp4")
                 caption_style = options.get("caption_style", "bold")
-                try:
-                    media_service.burn_captions(working_video, srt_path, captioned_path, caption_style)
-                    working_video = captioned_path
-                except Exception as caption_err:
-                    print(f"Caption burn failed (continuing without captions): {caption_err}")
+                media_service.burn_captions(working_video, srt_path, captioned_path, caption_style)
+                working_video = captioned_path
 
             # ── Step 5: Multi-format export ───────────────────
             self.update_state(state="PROGRESS", meta={"step": "Exporting formats", "progress": 60})
@@ -233,4 +228,117 @@ def generate_thumbnail(output_id: str, s3_key: str, user_id: str, project_id: st
 
         except Exception as e:
             update_output_status(output_id, "failed", {"error_message": str(e)[:500]})
+            raise
+
+
+# ── Scene assembler task ──────────────────────────────────────
+
+@celery_app.task(bind=True, name="assemble_scenes_task")
+def assemble_scenes_task(
+    self,
+    output_id: str,
+    project_id: str,
+    user_id: str,
+    scene_keys: list[str],
+    title: str,
+    options: dict,
+):
+    """
+    Download all scene clips from S3, concatenate them in order,
+    then run the standard processing pipeline (silences, captions, exports).
+    """
+    update_output_status(output_id, "processing")
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        try:
+            self.update_state(state="PROGRESS", meta={"step": "Downloading scenes", "progress": 5})
+
+            # Download all scenes
+            scene_paths = []
+            for i, key in enumerate(scene_keys):
+                local_path = os.path.join(tmp_dir, f"scene_{i:02d}.mp4")
+                storage_service.download_file_from_s3(key, local_path)
+                scene_paths.append(local_path)
+
+            self.update_state(state="PROGRESS", meta={"step": "Combining scenes", "progress": 20})
+
+            # Concatenate all scenes using FFmpeg concat demuxer
+            concat_list_path = os.path.join(tmp_dir, "concat.txt")
+            with open(concat_list_path, "w") as f:
+                for path in scene_paths:
+                    f.write(f"file '{path}'\n")
+
+            combined_path = os.path.join(tmp_dir, "combined.mp4")
+            media_service.run_ffmpeg(
+                ["-f", "concat", "-safe", "0", "-i", concat_list_path,
+                 "-pix_fmt", "yuv420p",
+                 "-c:v", "libx264", "-crf", "28", "-preset", "ultrafast",
+                 "-threads", "1",
+                 "-c:a", "aac", "-b:a", "96k",
+                 combined_path],
+                "concatenate scenes"
+            )
+
+            self.update_state(state="PROGRESS", meta={"step": "Transcribing audio", "progress": 35})
+
+            # Extract audio + transcribe
+            audio_path = os.path.join(tmp_dir, "audio.wav")
+            media_service.extract_audio(combined_path, audio_path)
+
+            import asyncio
+            transcript_data = asyncio.run(
+                transcription_service.transcribe_audio(audio_path)
+            )
+            srt_content = media_service.timestamps_to_srt(transcript_data.get("segments", []))
+
+            working_video = combined_path
+
+            # Cut silences
+            if options.get("cut_silences", True):
+                self.update_state(state="PROGRESS", meta={"step": "Cutting silences", "progress": 50})
+                cut_path = os.path.join(tmp_dir, "cut.mp4")
+                media_service.cut_silences(combined_path, cut_path)
+                working_video = cut_path
+
+            # Burn captions
+            if options.get("burn_captions", True) and srt_content:
+                self.update_state(state="PROGRESS", meta={"step": "Burning captions", "progress": 65})
+                srt_path = os.path.join(tmp_dir, "captions.srt")
+                with open(srt_path, "w") as f:
+                    f.write(srt_content)
+                captioned_path = os.path.join(tmp_dir, "captioned.mp4")
+                try:
+                    media_service.burn_captions(working_video, srt_path, captioned_path, options.get("caption_style", "bold"))
+                    working_video = captioned_path
+                except Exception as ce:
+                    print(f"Caption burn failed, continuing: {ce}")
+
+            # Multi-format export
+            self.update_state(state="PROGRESS", meta={"step": "Exporting formats", "progress": 78})
+            export_dir = os.path.join(tmp_dir, "exports")
+            format_outputs = media_service.export_multi_format(working_video, export_dir)
+
+            # Upload to R2
+            format_urls = {}
+            for fmt, local_path in format_outputs.items():
+                export_key = f"outputs/{user_id}/{project_id}/assembled_{fmt}.mp4"
+                storage_service.upload_file_to_s3(local_path, export_key)
+                url = asyncio.run(storage_service.create_presigned_download_url(export_key))
+                format_urls[fmt] = url
+
+            self.update_state(state="PROGRESS", meta={"step": "Saving results", "progress": 96})
+            update_output_status(output_id, "completed", {
+                "format_urls": json.dumps(format_urls),
+                "metadata":    json.dumps({
+                    "scenes_assembled": len(scene_keys),
+                    "title":            title,
+                }),
+            })
+
+            return {"status": "completed", "output_id": output_id}
+
+        except Exception as e:
+            error_msg = str(e)
+            print(f"Assembly error: {error_msg}")
+            update_output_status(output_id, "failed", {"error_message": error_msg[:500]})
             raise
