@@ -44,6 +44,15 @@ class ThumbnailRequest(BaseModel):
 
 @router.post("/upload-url")
 async def get_upload_url(request: UploadUrlRequest):
+    from app.services.usage_service import check_and_consume
+    from fastapi import HTTPException as _HTTPException
+    _usage = check_and_consume(request.user_id, "upload")
+    if not _usage["allowed"]:
+        raise _HTTPException(status_code=402, detail={
+            "error": "limit_reached",
+            "message": _usage.get("upgrade_message", "Upload limit reached"),
+            "used": _usage["used"], "limit": _usage["limit"], "plan": _usage["plan"],
+        })
     """
     Generate a presigned URL for direct browser-to-R2 upload.
     Frontend calls this first, then uploads directly to R2.

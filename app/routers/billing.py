@@ -21,7 +21,7 @@ PLANS = {
     },
     "creator": {
         "name": "Creator",
-        "price_inr": 1599,
+        "price_inr": 100,
         "limits": {
             "ideas_per_month":    50,
             "uploads_per_month":  20,
@@ -32,7 +32,7 @@ PLANS = {
     },
     "pro": {
         "name": "Pro",
-        "price_inr": 3999,
+        "price_inr": 350,
         "limits": {
             "ideas_per_month":    -1,
             "uploads_per_month":  -1,
@@ -152,3 +152,31 @@ async def admin_list_users(
 
     result = query.order("created_at", desc=True).execute()
     return {"users": result.data or [], "count": len(result.data or [])}
+
+
+# ── Usage endpoints ───────────────────────────────────────────
+
+@router.get("/usage/{user_id}")
+async def get_usage(user_id: str):
+    """Get current month usage + limits for a user. Called by frontend on page load."""
+    from app.services.usage_service import get_usage_summary
+    return get_usage_summary(user_id)
+
+
+@router.post("/check/{user_id}/{action}")
+async def check_usage(user_id: str, action: str):
+    """
+    Check if user can perform an action without consuming it.
+    action: 'idea' | 'upload'
+    """
+    from app.services.usage_service import get_user_plan, get_monthly_usage, PLAN_LIMITS
+    plan   = get_user_plan(user_id)
+    limits = PLAN_LIMITS.get(plan, PLAN_LIMITS["free"])
+    limit  = limits.get(f"{action}s_per_month", -1)
+    used   = get_monthly_usage(user_id, action) if limit != -1 else 0
+    return {
+        "allowed": limit == -1 or used < limit,
+        "used":    used,
+        "limit":   limit,
+        "plan":    plan,
+    }

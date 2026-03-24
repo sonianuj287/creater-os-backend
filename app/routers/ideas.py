@@ -62,6 +62,15 @@ async def refresh_trending_ideas(request: TrendingRequest):
 
 @router.post("/generate", response_model=IdeaGenerateResponse)
 async def generate_ideas(request: IdeaGenerateRequest):
+    from app.services.usage_service import check_and_consume
+    from fastapi import HTTPException as _HTTPException
+    _usage = check_and_consume(request.user_id, "idea")
+    if not _usage["allowed"]:
+        raise _HTTPException(status_code=402, detail={
+            "error": "limit_reached",
+            "message": _usage.get("upgrade_message", "Idea generation limit reached"),
+            "used": _usage["used"], "limit": _usage["limit"], "plan": _usage["plan"],
+        })
     """
     Idea Studio: user provides a prompt → Gemini generates ideas.
     This is the core AI feature gated behind the Creator plan.
