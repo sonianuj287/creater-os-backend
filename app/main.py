@@ -29,6 +29,7 @@ app.include_router(ideas.router)
 app.include_router(studio.router)
 app.include_router(media.router)
 app.include_router(publish.router)
+app.include_router(gift.router)
 
 
 @app.get("/")
