@@ -34,27 +34,31 @@ def get_user_plan(user_id: str) -> str:
 
 def get_monthly_usage(user_id: str, action: str) -> int:
     """Count how many times a user performed an action this calendar month."""
-    supabase = get_supabase()
-    month_start = date.today().replace(day=1).isoformat()
-
-    result = supabase.table("usage_logs")\
-        .select("id", count="exact")\
-        .eq("user_id", user_id)\
-        .eq("action", action)\
-        .gte("created_at", month_start)\
-        .execute()
-
-    return result.count or 0
+    try:
+        supabase = get_supabase()
+        month_start = date.today().replace(day=1).isoformat()
+        result = supabase.table("usage_logs")\
+            .select("id", count="exact")\
+            .eq("user_id", user_id)\
+            .eq("action", action)\
+            .gte("created_at", month_start)\
+            .execute()
+        return result.count or 0
+    except Exception:
+        return 0  # Fail open if table doesn't exist yet
 
 
 def log_usage(user_id: str, action: str, metadata: dict = None):
-    """Record a usage event."""
-    supabase = get_supabase()
-    supabase.table("usage_logs").insert({
-        "user_id":  user_id,
-        "action":   action,
-        "metadata": metadata or {},
-    }).execute()
+    """Record a usage event. Fails silently if table doesn't exist yet."""
+    try:
+        supabase = get_supabase()
+        supabase.table("usage_logs").insert({
+            "user_id":  user_id,
+            "action":   action,
+            "metadata": metadata or {},
+        }).execute()
+    except Exception:
+        pass  # Fail silently if table doesn't exist yet
 
 
 def check_and_consume(user_id: str, action: str) -> dict:

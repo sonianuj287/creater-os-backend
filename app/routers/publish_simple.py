@@ -71,11 +71,19 @@ async def post_instagram_reel(request: InstagramPostRequest):
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Could not get Instagram user: {str(e)}")
 
+    # Always regenerate a fresh presigned URL — stored URLs expire after 24h
+    from app.services.storage_service import create_presigned_download_url
+    s3_key = f"outputs/{request.user_id}/{request.project_id}/9x16.mp4"
+    try:
+        fresh_video_url = await create_presigned_download_url(s3_key)
+    except Exception:
+        fresh_video_url = request.video_url  # fallback to provided URL
+
     try:
         result = await post_reel(
             instagram_user_id=ig_user_id,
             access_token=token,
-            video_url=request.video_url,
+            video_url=fresh_video_url,
             caption=request.caption,
         )
 

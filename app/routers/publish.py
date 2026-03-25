@@ -1,4 +1,3 @@
-import httpx
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
@@ -53,14 +52,18 @@ class SchedulePostRequest(BaseModel):
 
 @router.get("/instagram/connect")
 async def instagram_connect(user_id: str = Query(...)):
+    """
+    Step 1: Redirect user to Instagram OAuth login page.
+    Frontend calls this URL — user is redirected to Instagram.
+    """
     redirect_uri = f"{settings.backend_url}/publish/instagram/callback"
-    
-    # Use Facebook OAuth (not api.instagram.com) for Business Login
+    scope = "instagram_basic,instagram_content_publish,instagram_manage_insights"
+
     oauth_url = (
-        f"https://www.facebook.com/dialog/oauth"
+        f"https://api.instagram.com/oauth/authorize"
         f"?client_id={settings.instagram_app_id}"
         f"&redirect_uri={redirect_uri}"
-        f"&scope=instagram_business_basic,instagram_business_content_publish,instagram_business_manage_insights,pages_show_list,pages_read_engagement"
+        f"&scope={scope}"
         f"&response_type=code"
         f"&state={user_id}"
     )
@@ -73,79 +76,44 @@ async def instagram_callback(
     state: str = Query(None),
     error: str = Query(None),
 ):
+    """
+    Step 2: Instagram redirects here with authorization code.
+    Exchange for token and save to DB.
+    """
     if error:
         return RedirectResponse(url=f"{FRONTEND_URL}/dashboard/publish?error=instagram_denied")
 
-    user_id      = state
+    if not code or not state:
+        return RedirectResponse(url=f"{FRONTEND_URL}/dashboard/publish?error=invalid_callback")
+
+    user_id = state
     redirect_uri = f"{settings.backend_url}/publish/instagram/callback"
 
     try:
-        async with httpx.AsyncClient() as client:
-            # Exchange code for Facebook user access token
-            token_resp = await client.get(
-                "https://graph.facebook.com/v21.0/oauth/access_token",
-                params={
-                    "client_id":     settings.instagram_app_id,
-                    "client_secret": settings.instagram_app_secret,
-                    "redirect_uri":  redirect_uri,
-                    "code":          code,
-                }
-            )
-            token_resp.raise_for_status()
-            token_data   = token_resp.json()
-            fb_token     = token_data["access_token"]
+        # Exchange code for long-lived token
+        token_data = await instagram_service.exchange_code_for_token(code, redirect_uri)
+        access_token = token_data["access_token"]
+        ig_user_id   = str(token_data["user_id"])
 
-            # Get Facebook pages linked to this user
-            pages_resp = await client.get(
-                "https://graph.facebook.com/v21.0/me/accounts",
-                params={"access_token": fb_token}
-            )
-            pages_resp.raise_for_status()
-            pages = pages_resp.json().get("data", [])
+        # Get user info
+        user_info = await instagram_service.get_user_info(access_token)
+        username  = user_info.get("username", "")
+        followers = user_info.get("followers_count", 0)
 
-            if not pages:
-                return RedirectResponse(url=f"{FRONTEND_URL}/dashboard/publish?error=no_facebook_page")
+        # Calculate token expiry (60 days)
+        expires_at = (datetime.utcnow() + timedelta(seconds=token_data.get("expires_in", 5183944))).isoformat()
 
-            page_token = pages[0]["access_token"]
-            page_id    = pages[0]["id"]
-
-            # Get Instagram Business Account linked to this page
-            ig_resp = await client.get(
-                f"https://graph.facebook.com/v21.0/{page_id}",
-                params={
-                    "fields":       "instagram_business_account",
-                    "access_token": page_token,
-                }
-            )
-            ig_resp.raise_for_status()
-            ig_data = ig_resp.json()
-            ig_account = ig_data.get("instagram_business_account")
-
-            if not ig_account:
-                return RedirectResponse(url=f"{FRONTEND_URL}/dashboard/publish?error=no_instagram_account")
-
-            ig_user_id = ig_account["id"]
-
-            # Get Instagram user details
-            user_resp = await client.get(
-                f"https://graph.facebook.com/v21.0/{ig_user_id}",
-                params={
-                    "fields":       "username,followers_count",
-                    "access_token": page_token,
-                }
-            )
-            user_resp.raise_for_status()
-            user_info = user_resp.json()
-
-        # Save to DB using page_token for posting
+        # Save to DB
         supabase = get_supabase()
         supabase.table("connected_accounts").upsert({
             "user_id":              user_id,
             "platform":             "instagram",
             "platform_user_id":     ig_user_id,
-            "platform_username":    user_info.get("username", ""),
-            "access_token":         page_token,
-            "follower_count":       user_info.get("followers_count", 0),
+            "platform_username":    username,
+            "platform_display_name": username,
+            "access_token":         access_token,
+            "token_expires_at":     expires_at,
+            "follower_count":       followers,
             "is_active":            True,
         }, on_conflict="user_id,platform").execute()
 
@@ -273,7 +241,7 @@ async def youtube_callback(
 
 @router.post("/youtube/post")
 async def post_to_youtube(request: PostYouTubeRequest):
-    """Upload a video to YouTube."""
+    """Upload a video to YouTube. Regenerates a fresh R2 URL before downloading."""
     supabase = get_supabase()
 
     account = supabase.table("connected_accounts")\
@@ -290,12 +258,17 @@ async def post_to_youtube(request: PostYouTubeRequest):
     acc = account.data
 
     try:
-        # Refresh access token first
+        # Always generate a fresh presigned URL — stored URLs expire after 24h
+        from app.services.storage_service import create_presigned_download_url
+        s3_key = f"outputs/{request.user_id}/{request.project_id}/9x16.mp4"
+        fresh_url = await create_presigned_download_url(s3_key)
+
+        # Refresh access token
         access_token = await youtube_service_publish.refresh_access_token(acc["refresh_token"])
 
         result = await youtube_service_publish.upload_video(
             access_token=access_token,
-            video_url=request.video_url,
+            video_url=fresh_url,
             title=request.title,
             description=request.description,
             tags=request.tags,
@@ -349,6 +322,30 @@ async def test_instagram_token():
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Token invalid: {str(e)}")
 
+
+
+class TokenVerifyRequest(BaseModel):
+    token:   str
+    user_id: str
+
+
+@router.post("/instagram/test-token")
+async def verify_instagram_token(request: TokenVerifyRequest):
+    """Verify a user-supplied Instagram access token from the frontend form."""
+    try:
+        info = await instagram_service.get_user_info(request.token)
+        if not info.get("id"):
+            raise HTTPException(status_code=400, detail="Token did not return a valid user")
+        return {
+            "status":    "token_valid",
+            "username":  info.get("username"),
+            "user_id":   info.get("id"),
+            "followers": info.get("followers_count", 0),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid token: {str(e)}")
 
 # ── Analytics pull ────────────────────────────────────────────
 
