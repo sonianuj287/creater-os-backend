@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.config import get_settings
-from app.routers import ideas, studio, media, publish, billing
+from app.routers import ideas, studio, media, publish, billing, gift
 
 settings = get_settings()
 
