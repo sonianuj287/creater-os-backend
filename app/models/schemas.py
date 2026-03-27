@@ -5,6 +5,7 @@ from typing import Optional
 # ── Idea generation ──────────────────────────────────────────
 
 class IdeaGenerateRequest(BaseModel):
+    user_id: str
     prompt: str                        # "I want to talk about passive income"
     niche: str                         # "finance"
     platforms: list[str]               # ["instagram", "youtube"]
