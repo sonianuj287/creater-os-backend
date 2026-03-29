@@ -262,21 +262,34 @@ def assemble_scenes_task(
 
             self.update_state(state="PROGRESS", meta={"step": "Combining scenes", "progress": 20})
 
-            # Concatenate all scenes using FFmpeg concat demuxer
-            concat_list_path = os.path.join(tmp_dir, "concat.txt")
-            with open(concat_list_path, "w") as f:
-                for path in scene_paths:
-                    f.write(f"file '{path}'\n")
+            # Concatenate all scenes using FFmpeg concat filter for maximum safety
+            inputs = []
+            filter_parts = []
+            
+            for i, path in enumerate(scene_paths):
+                inputs.extend(["-i", path])
+                # Scale each input to 1080x1920 (pad if needed), force 30fps
+                filter_parts.append(
+                    f"[{i}:v]scale=1080:1920:force_original_aspect_ratio=decrease,"
+                    f"pad=1080:1920:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=30[v{i}];"
+                    f"[{i}:a]aformat=sample_rates=44100:channel_layouts=stereo[a{i}];"
+                )
+
+            concat_inputs = "".join([f"[v{i}][a{i}]" for i in range(len(scene_paths))])
+            concat_filter = "".join(filter_parts) + f"{concat_inputs}concat=n={len(scene_paths)}:v=1:a=1[outv][outa]"
 
             combined_path = os.path.join(tmp_dir, "combined.mp4")
             media_service.run_ffmpeg(
-                ["-f", "concat", "-safe", "0", "-i", concat_list_path,
+                inputs + [
+                 "-filter_complex", concat_filter,
+                 "-map", "[outv]",
+                 "-map", "[outa]",
                  "-pix_fmt", "yuv420p",
                  "-c:v", "libx264", "-crf", "28", "-preset", "ultrafast",
                  "-threads", "1",
                  "-c:a", "aac", "-b:a", "96k",
                  combined_path],
-                "concatenate scenes"
+                "concatenate scenes with filtergraph"
             )
 
             self.update_state(state="PROGRESS", meta={"step": "Transcribing audio", "progress": 35})
