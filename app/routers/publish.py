@@ -265,7 +265,11 @@ async def post_to_youtube(request: PostYouTubeRequest):
     try:
         # Always generate a fresh presigned URL — stored URLs expire after 24h
         from app.services.storage_service import create_presigned_download_url
-        s3_key = f"outputs/{request.user_id}/{request.project_id}/9x16.mp4"
+        from urllib.parse import urlparse, unquote
+
+        # Extract exact S3 key from the frontend URL (safely handles assembled_9x16.mp4 vs 9x16.mp4)
+        path = unquote(urlparse(request.video_url).path)
+        s3_key = path[path.find("outputs/"):] if "outputs/" in path else f"outputs/{request.user_id}/{request.project_id}/9x16.mp4"
         fresh_url = await create_presigned_download_url(s3_key)
 
         # Refresh access token
