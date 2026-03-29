@@ -217,6 +217,16 @@ async def assemble_scenes(request: AssembleRequest):
     """
     supabase = get_supabase()
 
+    # Ensure project exists to appease foreign key constraint
+    proj_res = supabase.table("projects").select("id").eq("id", request.project_id).execute()
+    if not proj_res.data:
+        supabase.table("projects").insert({
+            "id": request.project_id,
+            "user_id": request.user_id,
+            "title": request.title or "Assembled Video",
+            "status": "editing"
+        }).execute()
+
     output_id = str(uuid.uuid4())
     supabase.table("generated_outputs").insert({
         "id":          output_id,
