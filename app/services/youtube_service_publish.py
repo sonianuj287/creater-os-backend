@@ -27,6 +27,9 @@ async def exchange_code_for_token(code: str, redirect_uri: str) -> dict:
 
 async def refresh_access_token(refresh_token: str) -> str:
     """Get a fresh access token using the refresh token."""
+    if not refresh_token:
+        raise Exception("No refresh token. Please disconnect and reconnect your YouTube account.")
+        
     async with httpx.AsyncClient() as client:
         resp = await client.post(
             "https://oauth2.googleapis.com/token",
@@ -37,7 +40,9 @@ async def refresh_access_token(refresh_token: str) -> str:
                 "grant_type":    "refresh_token",
             }
         )
-        resp.raise_for_status()
+        if resp.status_code != 200:
+            raise Exception(f"Google Token Error: {resp.text}")
+            
         return resp.json()["access_token"]
 
 

@@ -217,18 +217,23 @@ async def youtube_callback(
 
         channel_info = await youtube_service_publish.get_channel_info(access_token)
 
-        supabase = get_supabase()
-        supabase.table("connected_accounts").upsert({
+        update_data = {
             "user_id":              user_id,
             "platform":             "youtube",
             "platform_user_id":     channel_info["channel_id"],
             "platform_username":    channel_info["title"],
             "platform_display_name": channel_info["title"],
             "access_token":         access_token,
-            "refresh_token":        refresh_token,
             "follower_count":       channel_info["subscriber_count"],
             "is_active":            True,
-        }, on_conflict="user_id,platform").execute()
+        }
+        if refresh_token:
+            update_data["refresh_token"] = refresh_token
+
+        supabase = get_supabase()
+        supabase.table("connected_accounts").upsert(
+            update_data, on_conflict="user_id,platform"
+        ).execute()
 
         return RedirectResponse(url=f"{FRONTEND_URL}/dashboard/publish?connected=youtube")
 
