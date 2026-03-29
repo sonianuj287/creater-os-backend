@@ -422,3 +422,54 @@ async def pull_analytics(user_id: str):
             print(f"Analytics pull failed for post {post['id']}: {e}")
 
     return {"message": f"Pulled analytics for {pulled} posts", "pulled": pulled}
+
+
+# ── Profile AI Review ────────────────────────────────────────
+
+@router.get("/{platform}/review")
+async def get_profile_review(platform: str, user_id: str):
+    """Generates an AI profile review by fetching channel metrics and feeding it to Gemini."""
+    if platform not in ("youtube", "instagram"):
+        raise HTTPException(status_code=400, detail="Unsupported platform for AI review.")
+        
+    supabase = get_supabase()
+    acc_res = supabase.table("connected_accounts").select("*")\
+        .eq("user_id", user_id).eq("platform", platform).eq("is_active", True).execute()
+        
+    if not acc_res.data:
+        raise HTTPException(status_code=400, detail=f"{platform.title()} is not connected.")
+        
+    acc = acc_res.data[0]
+    access_token = acc["access_token"]
+    
+    try:
+        stats = {}
+        extra_context = ""
+        
+        if platform == "youtube":
+            access_token = await youtube_service_publish.refresh_access_token(acc["refresh_token"])
+            info = await youtube_service_publish.get_channel_info(access_token)
+            
+            stats = {
+                "subscribers": info.get("subscriber_count", 0),
+                "total_views": info.get("view_count", 0),
+                "total_videos": info.get("video_count", 0)
+            }
+            extra_context = info.get("description", "")
+            
+        elif platform == "instagram":
+            # Instagram Basic API is strictly constrained; pull what we can
+            info = await instagram_service.get_user_info(access_token)
+            stats = {
+                "followers": info.get("followers_count", 0),
+                "account_type": info.get("account_type", "UNKNOWN")
+            }
+            extra_context = f"Username: {info.get('username', '')}"
+
+        from app.services.ai_service import generate_profile_review
+        markdown_review = await generate_profile_review(platform, stats, extra_context)
+        
+        return {"review": markdown_review}
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to generate review: {str(e)}")

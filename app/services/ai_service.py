@@ -264,3 +264,45 @@ Return ONLY valid JSON:
     text = _generate(prompt, temperature=0.85)
     data = _parse_json(text)
     return data.get("ideas", [])
+
+# ── Profile AI Review ────────────────────────────────────────
+
+async def generate_profile_review(
+    platform: str,
+    stats: dict,
+    extra_context: str = ""
+) -> str:
+    """Generate an AI profile review leveraging Gemini."""
+    
+    stats_str = "\n".join(f"- {k.replace('_', ' ').capitalize()}: {v}" for k, v in stats.items())
+    
+    prompt = f"""You are a top-tier social media growth expert for {platform.capitalize()}.
+I need you to constructively audit a creator's profile.
+
+Here is what we know about their current {platform.capitalize()} profile:
+{stats_str}
+
+Additional context (e.g. bio/description text):
+{extra_context or "Not available."}
+
+Based strictly on this data, provide a rapid, highly actionable profile audit.
+Format your response entirely in valid Markdown (no markdown code blocks like ```markdown, just pure markdown text).
+Use emojis sparingly. Use Headings (###) and strict bullet points.
+
+Structure exactly like this:
+### 📊 The Diagnosis
+(1 short paragraph analyzing their stats/engagement ratio)
+
+### 💎 What's Working
+- (bullet 1)
+
+### 🚨 Critical Fixes
+- (Actionable suggestion 1)
+- (Actionable suggestion 2)
+
+### 🚀 Next 30 Days Strategy
+(1 sentence thesis on what to do next)
+"""
+
+    text = _generate(prompt, temperature=0.7)
+    return text.strip()

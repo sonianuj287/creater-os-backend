@@ -237,6 +237,16 @@ async def assemble_scenes(request: AssembleRequest):
         "metadata":    '{"scene_count": ' + str(len(request.scene_keys)) + '}',
     }).execute()
 
+    from app.services.usage_service import get_usage_summary
+    usage = get_usage_summary(request.user_id)
+    limits = usage.get("limits", {})
+    
+    # Enforce Plan Constraints
+    if limits.get("exports_per_upload") == 1:
+        request.options["export_formats"] = ["9x16"]  # Force 1 format
+    if limits.get("watermark") is True:
+        request.options["watermark"] = True
+
     from app.workers.video_tasks import assemble_scenes_task
     task = assemble_scenes_task.delay(
         output_id=output_id,

@@ -64,10 +64,13 @@ async def get_channel_info(access_token: str) -> dict:
 
         channel = items[0]
         return {
-            "channel_id":    channel["id"],
-            "title":         channel["snippet"]["title"],
+            "channel_id":       channel["id"],
+            "title":            channel["snippet"]["title"],
+            "description":      channel["snippet"].get("description", ""),
             "subscriber_count": int(channel["statistics"].get("subscriberCount", 0)),
-            "thumbnail":     channel["snippet"]["thumbnails"].get("default", {}).get("url", ""),
+            "video_count":      int(channel["statistics"].get("videoCount", 0)),
+            "view_count":       int(channel["statistics"].get("viewCount", 0)),
+            "thumbnail":        channel["snippet"]["thumbnails"].get("default", {}).get("url", ""),
         }
 
 

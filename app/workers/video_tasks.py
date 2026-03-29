@@ -276,8 +276,12 @@ def assemble_scenes_task(
                 )
 
             concat_inputs = "".join([f"[v{i}][a{i}]" for i in range(len(scene_paths))])
-            concat_filter = "".join(filter_parts) + f"{concat_inputs}concat=n={len(scene_paths)}:v=1:a=1[outv][outa]"
-
+            
+            watermark_filter = "[outv]"
+            if options.get("watermark"):
+                watermark_filter = "[vout_raw];[vout_raw]drawtext=text='Made with CreaterOS':fontcolor=white@0.5:fontsize=h/35:x=w-tw-30:y=h-th-30[outv]"
+                
+            concat_filter = "".join(filter_parts) + f"{concat_inputs}concat=n={len(scene_paths)}:v=1:a=1{watermark_filter}[outa]"
             combined_path = os.path.join(tmp_dir, "combined.mp4")
             media_service.run_ffmpeg(
                 inputs + [
