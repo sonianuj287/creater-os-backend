@@ -40,6 +40,10 @@ class Settings(BaseSettings):
     # Admin
     admin_secret_key: str = ""
 
+    # Email (Resend — https://resend.com, free 3000 emails/mo)
+    resend_api_key: str = ""
+
+
     class Config:
         env_file = ".env"
         case_sensitive = False

@@ -27,9 +27,12 @@ PLAN_LIMITS = {
 
 
 def get_user_plan(user_id: str) -> str:
-    supabase = get_supabase()
-    result = supabase.table("profiles").select("plan").eq("id", user_id).single().execute()
-    return result.data.get("plan", "free") if result.data else "free"
+    try:
+        supabase = get_supabase()
+        result = supabase.table("profiles").select("plan").eq("id", user_id).single().execute()
+        return result.data.get("plan", "free") if result.data else "free"
+    except Exception:
+        return "free"  # Fail open — treat as free plan if DB unreachable
 
 
 def get_monthly_usage(user_id: str, action: str) -> int:
