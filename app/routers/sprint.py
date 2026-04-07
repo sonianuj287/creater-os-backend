@@ -124,7 +124,7 @@ def _daily_reminder_html(name: str, day: int, idea_title: str, hook: str, niche:
 
 async def _generate_sprint_ideas(niche: str) -> list[dict]:
     """Ask Gemini for a coherent 30-day progressive content roadmap for a niche."""
-    prompt = f"""You are a viral content strategist. Create a 30-day progressive content roadmap for a {niche} creator on Instagram/YouTube.
+    prompt = f"""You are a viral content strategist. Create a 30-day progressive content roadmap for a {niche} creator on YouTube.
 
 Rules:
 - Days 1-5: Easy, relatable, personal story angles

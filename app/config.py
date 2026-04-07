@@ -13,10 +13,7 @@ class Settings(BaseSettings):
     youtube_client_id: str = ""
     youtube_client_secret: str = ""
 
-    # Instagram
-    instagram_app_id: str = ""
-    instagram_app_secret: str = ""
-    instagram_test_token: str = ""
+
 
     # Supabase
     supabase_url: str = ""

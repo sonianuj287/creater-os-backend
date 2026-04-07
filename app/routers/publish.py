@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 
 from app.config import get_settings
 from app.services.db_service import get_supabase
-from app.services import instagram_service, youtube_service_publish
+from app.services import youtube_service_publish
 
 settings = get_settings()
 router = APIRouter(prefix="/publish", tags=["publish"])
@@ -16,14 +16,6 @@ FRONTEND_URL = settings.frontend_url
 
 
 # ── Request models ────────────────────────────────────────────
-
-class PostReelRequest(BaseModel):
-    user_id:    str
-    output_id:  str
-    project_id: str
-    video_url:  str
-    caption:    str
-    platform:   str = "instagram"
 
 
 class PostYouTubeRequest(BaseModel):
@@ -47,133 +39,6 @@ class SchedulePostRequest(BaseModel):
     caption:      str
     scheduled_for: str  # ISO datetime string
 
-
-# ── Instagram OAuth ───────────────────────────────────────────
-
-@router.get("/instagram/connect")
-async def instagram_connect(user_id: str = Query(...)):
-    """
-    Step 1: Redirect user to Instagram OAuth login page.
-    Frontend calls this URL — user is redirected to Instagram.
-    """
-    redirect_uri = f"{settings.backend_url}/publish/instagram/callback"
-    scope = "instagram_basic,instagram_content_publish,instagram_manage_insights"
-
-    oauth_url = (
-        f"https://api.instagram.com/oauth/authorize"
-        f"?client_id={settings.instagram_app_id}"
-        f"&redirect_uri={redirect_uri}"
-        f"&scope={scope}"
-        f"&response_type=code"
-        f"&state={user_id}"
-    )
-    return RedirectResponse(url=oauth_url)
-
-
-@router.get("/instagram/callback")
-async def instagram_callback(
-    code: str = Query(None),
-    state: str = Query(None),
-    error: str = Query(None),
-):
-    """
-    Step 2: Instagram redirects here with authorization code.
-    Exchange for token and save to DB.
-    """
-    if error:
-        return RedirectResponse(url=f"{FRONTEND_URL}/dashboard/publish?error=instagram_denied")
-
-    if not code or not state:
-        return RedirectResponse(url=f"{FRONTEND_URL}/dashboard/publish?error=invalid_callback")
-
-    user_id = state
-    redirect_uri = f"{settings.backend_url}/publish/instagram/callback"
-
-    try:
-        # Exchange code for long-lived token
-        token_data = await instagram_service.exchange_code_for_token(code, redirect_uri)
-        access_token = token_data["access_token"]
-        ig_user_id   = str(token_data["user_id"])
-
-        # Get user info
-        user_info = await instagram_service.get_user_info(access_token)
-        username  = user_info.get("username", "")
-        followers = user_info.get("followers_count", 0)
-
-        # Calculate token expiry (60 days)
-        expires_at = (datetime.utcnow() + timedelta(seconds=token_data.get("expires_in", 5183944))).isoformat()
-
-        # Save to DB
-        supabase = get_supabase()
-        supabase.table("connected_accounts").upsert({
-            "user_id":              user_id,
-            "platform":             "instagram",
-            "platform_user_id":     ig_user_id,
-            "platform_username":    username,
-            "platform_display_name": username,
-            "access_token":         access_token,
-            "token_expires_at":     expires_at,
-            "follower_count":       followers,
-            "is_active":            True,
-        }, on_conflict="user_id,platform").execute()
-
-        return RedirectResponse(url=f"{FRONTEND_URL}/dashboard/publish?connected=instagram")
-
-    except Exception as e:
-        print(f"Instagram OAuth error: {e}")
-        return RedirectResponse(url=f"{FRONTEND_URL}/dashboard/publish?error=instagram_failed")
-
-
-# ── Instagram posting ─────────────────────────────────────────
-
-@router.post("/instagram/post")
-async def post_to_instagram(request: PostReelRequest):
-    """Post a video as an Instagram Reel."""
-    supabase = get_supabase()
-
-    # Get connected account
-    account = supabase.table("connected_accounts")\
-        .select("*")\
-        .eq("user_id", request.user_id)\
-        .eq("platform", "instagram")\
-        .eq("is_active", True)\
-        .single()\
-        .execute()
-
-    if not account.data:
-        raise HTTPException(status_code=400, detail="Instagram account not connected")
-
-    acc = account.data
-
-    try:
-        result = await instagram_service.post_reel(
-            instagram_user_id=acc["platform_user_id"],
-            access_token=acc["access_token"],
-            video_url=request.video_url,
-            caption=request.caption,
-        )
-
-        # Save post record
-        supabase.table("scheduled_posts").insert({
-            "user_id":         request.user_id,
-            "project_id":      request.project_id,
-            "output_id":       request.output_id,
-            "platform":        "instagram",
-            "platform_post_id": result["media_id"],
-            "caption":         request.caption,
-            "scheduled_for":   datetime.utcnow().isoformat(),
-            "posted_at":       datetime.utcnow().isoformat(),
-            "status":          "posted",
-        }).execute()
-
-        return {
-            "success":  True,
-            "media_id": result["media_id"],
-            "message":  "Posted to Instagram successfully",
-        }
-
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Instagram post failed: {str(e)}")
 
 
 # ── YouTube OAuth ─────────────────────────────────────────────
@@ -308,54 +173,6 @@ async def post_to_youtube(request: PostYouTubeRequest):
         raise HTTPException(status_code=500, detail=f"YouTube upload failed: {str(e)}")
 
 
-# ── Test Instagram with saved token ──────────────────────────
-
-@router.get("/instagram/test")
-async def test_instagram_token():
-    """
-    Test the INSTAGRAM_TEST_TOKEN from Railway env.
-    Verifies the token works before building full OAuth.
-    """
-    token = settings.instagram_test_token
-    if not token:
-        raise HTTPException(status_code=400, detail="INSTAGRAM_TEST_TOKEN not set in environment")
-
-    try:
-        info = await instagram_service.get_user_info(token)
-        return {
-            "status":   "token_valid",
-            "username": info.get("username"),
-            "user_id":  info.get("id"),
-            "followers": info.get("followers_count"),
-        }
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Token invalid: {str(e)}")
-
-
-
-class TokenVerifyRequest(BaseModel):
-    token:   str
-    user_id: str
-
-
-@router.post("/instagram/test-token")
-async def verify_instagram_token(request: TokenVerifyRequest):
-    """Verify a user-supplied Instagram access token from the frontend form."""
-    try:
-        info = await instagram_service.get_user_info(request.token)
-        if not info.get("id"):
-            raise HTTPException(status_code=400, detail="Token did not return a valid user")
-        return {
-            "status":    "token_valid",
-            "username":  info.get("username"),
-            "user_id":   info.get("id"),
-            "followers": info.get("followers_count", 0),
-        }
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Invalid token: {str(e)}")
-
 # ── Analytics pull ────────────────────────────────────────────
 
 @router.post("/analytics/pull")
@@ -393,12 +210,7 @@ async def pull_analytics(user_id: str):
             continue
 
         try:
-            metrics = {}
-            if platform == "instagram":
-                metrics = await instagram_service.get_media_insights(
-                    post["platform_post_id"], acc["access_token"]
-                )
-            elif platform == "youtube":
+            if platform == "youtube":
                 access_token = await youtube_service_publish.refresh_access_token(acc["refresh_token"])
                 metrics = await youtube_service_publish.get_video_analytics(
                     post["platform_post_id"], access_token
@@ -429,8 +241,8 @@ async def pull_analytics(user_id: str):
 @router.get("/{platform}/review")
 async def get_profile_review(platform: str, user_id: str):
     """Generates an AI profile review by fetching channel metrics and feeding it to Gemini."""
-    if platform not in ("youtube", "instagram"):
-        raise HTTPException(status_code=400, detail="Unsupported platform for AI review.")
+    if platform != "youtube":
+        raise HTTPException(status_code=400, detail="Unsupported platform for AI review. Only YouTube is supported.")
         
     supabase = get_supabase()
     acc_res = supabase.table("connected_accounts").select("*")\
@@ -456,15 +268,6 @@ async def get_profile_review(platform: str, user_id: str):
                 "total_videos": info.get("video_count", 0)
             }
             extra_context = info.get("description", "")
-            
-        elif platform == "instagram":
-            # Instagram Basic API is strictly constrained; pull what we can
-            info = await instagram_service.get_user_info(access_token)
-            stats = {
-                "followers": info.get("followers_count", 0),
-                "account_type": info.get("account_type", "UNKNOWN")
-            }
-            extra_context = f"Username: {info.get('username', '')}"
 
         from app.services.ai_service import generate_profile_review
         markdown_review = await generate_profile_review(platform, stats, extra_context)

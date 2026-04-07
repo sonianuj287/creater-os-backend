@@ -47,5 +47,3 @@ async def root():
 async def health():
     return {"status": "ok"}
 
-from app.routers import publish_simple
-app.include_router(publish_simple.router)

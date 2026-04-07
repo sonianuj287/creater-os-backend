@@ -172,7 +172,6 @@ Return ONLY valid JSON:
 # ── Captions & hashtags ──────────────────────────────────────
 
 PLATFORM_CAPTION_RULES = {
-    "instagram": "Max 2200 chars. First line is critical. Use line breaks. End with a question.",
     "youtube":   "First 100 chars show in search. Include keywords naturally.",
     "tiktok":    "Keep under 300 chars. Casual tone. 1-2 sentences max.",
     "twitter":   "Under 280 chars total. Punchy. Max 2 hashtags.",
@@ -232,7 +231,7 @@ async def generate_trending_ideas_from_signals(
     trending_titles: list[str],
     platforms: list[str] = None,
 ) -> list[dict]:
-    platform_str = ", ".join(platforms or ["instagram", "youtube"])
+    platform_str = ", ".join(platforms or ["youtube"])
     titles_str   = "\n".join(f"- {t}" for t in trending_titles[:15])
 
     prompt = f"""You are a viral content strategist. Based on these currently trending YouTube videos in the '{niche}' niche:
@@ -250,7 +249,7 @@ Return ONLY valid JSON:
       "description": "string (2 sentences)",
       "hook_preview": "string (opening line in quotes, punchy)",
       "niche": "{niche}",
-      "platforms": ["{(platforms or ['instagram', 'youtube'])[0]}"],
+      "platforms": ["{(platforms or ['youtube'])[0]}"],
       "recommended_format": "reel|short|carousel|long_form|thread",
       "difficulty": "easy|medium|hard",
       "estimated_minutes": 30,

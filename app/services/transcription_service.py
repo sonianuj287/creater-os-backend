@@ -121,8 +121,8 @@ async def generate_carousel_slides(
     title: str,
     num_slides: int = 5,
 ) -> list[dict]:
-    """Generate Instagram carousel slide content from a transcript."""
-    prompt = f"""Create a {num_slides}-slide Instagram carousel from this content.
+    """Generate YouTube Community Post carousel slide content from a transcript."""
+    prompt = f"""Create a {num_slides}-slide YouTube Community Post carousel from this content.
 
 Title: {title}
 Transcript: {transcript[:3000]}
